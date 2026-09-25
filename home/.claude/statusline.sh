@@ -10,7 +10,7 @@ if git -C "$dir" --no-optional-locks rev-parse --is-inside-work-tree >/dev/null 
   branch=$(git -C "$dir" --no-optional-locks branch --show-current 2>/dev/null)
 fi
 
-printf '\033[2;36m%s\033[0m \033[2;34m%s\033[0m' "$model" "$dir_display"
+printf '\033[2;36m%s\033[0m \033[94m%s\033[0m' "$model" "$dir_display"
 [ -n "$branch" ] && printf ' \033[2;33m⎇ %s\033[0m' "$branch"
 printf '\n'
 
@@ -70,8 +70,6 @@ else
 fi
 printf '\033[%sm%s %s\033[0m' "$(color "$ctx")" "$bar" "$ctx_label"
 
-printf "$sep"'\033[2m↑ %s ↓ %s\033[0m' "$(fmt_tokens "$tok_in")" "$(fmt_tokens "$tok_out")"
-
 if [ "$five" != "-" ]; then
   printf "$sep"'\033[%sm5h %s%%\033[0m' "$(color "$five")" "$five"
 fi
@@ -80,7 +78,7 @@ if [ "$seven" != "-" ]; then
   printf "$sep"'\033[%sm7d %s%%\033[0m' "$(color "$seven")" "$seven"
 fi
 
-printf "$sep"'\033[2m$%.2f\033[0m' "$cost"
+printf "$sep"'\033[36m$%.2f\033[0m\n' "$cost"
 
 mins=$(( dur / 60000 ))
 if (( mins >= 60 )); then
@@ -88,6 +86,7 @@ if (( mins >= 60 )); then
 else
   dur_label="${mins}m"
 fi
-printf "$sep"'\033[2m%s\033[0m' "$dur_label"
 
+printf '\033[35m↑ %s ↓ %s\033[0m' "$(fmt_tokens "$tok_in")" "$(fmt_tokens "$tok_out")"
+printf "$sep"'\033[34m%s\033[0m' "$dur_label"
 printf "$sep"'\033[32m+%s\033[0m \033[31m−%s\033[0m\n' "$added" "$removed"
