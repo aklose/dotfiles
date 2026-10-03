@@ -22,15 +22,20 @@ find . -type f | sed 's#^\./##' | while read -r rel; do
 done
 
 settings="$HOME/.claude/settings.json"
-statusline='{"type": "command", "command": "~/.claude/statusline.sh"}'
+mods="$DOTFILES/mods/statusline"
 if [ -f "$settings" ]; then
   tmp="$(mktemp)"
-  jq --argjson sl "$statusline" '.statusLine = $sl' "$settings" > "$tmp"
+  jq --arg mods "$mods" 'del(.statusLine) | .env.CLAUDE_CODE_PLUGIN_DIRS = $mods' "$settings" > "$tmp"
   cat "$tmp" > "$settings"
   rm "$tmp"
-  echo "updated statusLine in $settings"
+  echo "updated $settings"
 else
   mkdir -p "$(dirname "$settings")"
-  jq -n --argjson sl "$statusline" '{statusLine: $sl}' > "$settings"
+  jq -n --arg mods "$mods" '{env: {CLAUDE_CODE_PLUGIN_DIRS: $mods}}' > "$settings"
   echo "created $settings"
+fi
+
+if [ -L "$HOME/.claude/statusline.sh" ] && [ ! -e "$HOME/.claude/statusline.sh" ]; then
+  rm "$HOME/.claude/statusline.sh"
+  echo "removed stale ~/.claude/statusline.sh"
 fi

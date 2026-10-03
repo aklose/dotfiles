@@ -1,0 +1,6 @@
+{
+  "name": "statusline",
+  "version": "0.1.0",
+  "description": "Live status band: model, dir, git, context, rate limits, cost and session stats",
+  "types": "./types/index.d.ts"
+}

@@ -4,7 +4,7 @@ Files under `home/` mirror `$HOME` and are symlinked into place.
 
 Currently tracked:
 
-- Claude Code status line (`~/.claude/statusline.sh`)
+- Claude Code status line mod (`mods/statusline`, loaded in place)
 - fish config (`~/.config/fish/config.fish`)
 
 ## New machine
@@ -16,7 +16,9 @@ git clone <repo-url> ~/dev/dotfiles
 
 Existing files are moved to `~/.dotfiles_backup/<timestamp>/` before linking.
 
-The script also sets `statusLine` in `~/.claude/settings.json`, keeping any other settings, or creates the file if it's missing. Requires `jq`.
+The script also points `env.CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json` at the status line mod and removes any `statusLine` command, keeping other settings, or creates the file if it's missing. Requires `jq`.
+
+The mod draws a live band above the prompt. Check it with `claude plugin validate mods/statusline` and `claude plugin test mods/statusline`.
 
 ## Adding a file
 
