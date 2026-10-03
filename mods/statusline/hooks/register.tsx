@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionContextBreakdown, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
 
-import type { Ctx, Line, Slice } from '../types'
+import type { Line } from '../types'
 
 const EMPTY: Line = {
   model: '',
@@ -23,68 +23,12 @@ const EMPTY: Line = {
 
 const line = atom({ plugin: 'statusline', key: 'line' } as const, EMPTY)
 
-const ctx = atom({ plugin: 'statusline', key: 'ctx' } as const, null)
-
-const PANE = 'ctx'
-
-const SHORT: Record<string, string> = {
-  'System prompt': 'system',
-  'System tools': 'tools',
-  'MCP tools': 'mcp',
-  'Memory files': 'memory',
-  'Custom agents': 'agents',
-  'Slash commands': 'commands',
-  Skills: 'skills',
-  Messages: 'msgs',
-}
-
-const PALETTE = ['magenta', 'cyan', 'yellow', 'green', 'blue', 'red', 'white']
-
 const LIMIT_LABELS: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: '$' }
 
 const set = ($: EngineInterface, patch: Partial<Line>) => update($, line, l => ({ ...l, ...patch }))
 
 const toLimits = (limits: SessionRateLimit[]) =>
   limits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percent: Math.floor(percentUsed), resetsAt }))
-
-const tilde = (path: string, home?: string) => (home && path.startsWith(home) ? `~${path.slice(home.length)}` : path)
-
-const byTokens = (a: Slice, b: Slice) => b.tokens - a.tokens
-
-const sumBy = <T,>(items: T[], name: (t: T) => string, tokens: (t: T) => number): Slice[] => {
-  const totals = new Map<string, number>()
-  for (const item of items) totals.set(name(item), (totals.get(name(item)) ?? 0) + tokens(item))
-  return [...totals].map(([n, t]) => ({ name: n, tokens: t })).sort(byTokens)
-}
-
-export const toCtx = (b: SessionContextBreakdown, home?: string): Ctx => {
-  const total = (kind: string) => b.categories.filter(c => c.kind === kind).reduce((n, c) => n + c.tokens, 0)
-  const skills = b.skills?.skillFrontmatter ?? []
-  return {
-    max: b.rawMaxTokens,
-    used: b.categories.filter(c => c.kind === 'used' && c.tokens > 0).map(({ name, tokens }) => ({ name, tokens })),
-    free: total('free'),
-    buffer: total('buffer'),
-    deferred: total('deferred'),
-    memory: b.memoryFiles.map(f => ({ name: tilde(f.path, home), tokens: f.tokens })).sort(byTokens),
-    mcp: sumBy(b.mcpTools.filter(t => t.isLoaded), t => t.serverName, t => t.tokens),
-    plugins: sumBy(skills.filter(sk => sk.pluginName !== undefined), sk => sk.pluginName ?? '', sk => sk.tokens),
-    skills: sumBy(skills, sk => sk.source, sk => sk.tokens),
-    agents: sumBy(b.agents, a => a.source, a => a.tokens),
-  }
-}
-
-const colorOf = (c: Ctx, slice: Slice) => PALETTE[c.used.indexOf(slice) % PALETTE.length] ?? 'white'
-
-export const segments = (c: Ctx, width: number) => {
-  let left = width
-  const cells = c.used.map((slice, i) => {
-    const n = Math.min(left, Math.max(1, Math.round((slice.tokens / c.max) * width)))
-    left -= n
-    return { color: PALETTE[i % PALETTE.length] ?? 'white', n }
-  })
-  return { cells, rest: left }
-}
 
 const countLines = (s: string) => (s === '' ? 0 : s.split('\n').length)
 
@@ -118,12 +62,6 @@ const refreshGit = async ($: EngineInterface) => {
   await set($, { branch: head.stdout.trim() || 'detached', isDirty: status.stdout.trim() !== '' })
 }
 
-const refreshCtx = async ($: EngineInterface) => {
-  const [usage, home] = await Promise.all([$.session.usage({ breakdown: 'summary' }), $.env.get('HOME')])
-  const b = usage.context.breakdown
-  await update($, ctx, () => (b ? toCtx(b, home) : null))
-}
-
 const refreshSession = async ($: EngineInterface) => {
   const [model, cwd, home, usage, now] = await Promise.all([
     $.session.model(),
@@ -134,7 +72,7 @@ const refreshSession = async ($: EngineInterface) => {
   ])
   await set($, {
     model,
-    dir: tilde(cwd, home),
+    dir: home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd,
     ctxPercent: usage.context.percent ?? null,
     ctxTokens: usage.context.tokens ?? null,
     window: usage.context.window,
@@ -147,8 +85,7 @@ const refreshSession = async ($: EngineInterface) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'ctx', description: 'Show what is filling the context window' })
-    await Promise.all([refreshSession($), refreshGit($), refreshCtx($)])
+    await Promise.all([refreshSession($), refreshGit($)])
     $.clock.every(30_000, async () => set($, { now: await $.clock.now() }))
     return next(e)
   })
@@ -161,7 +98,6 @@ export const register: Register = on => {
       limits: toLimits(e.rateLimits),
       usd: e.cost?.usd ?? 0,
     })
-    if (e.changed.includes('context')) await refreshCtx($)
     return next(e)
   })
 
@@ -174,7 +110,7 @@ export const register: Register = on => {
         tokOut: l.tokOut + u.output_tokens,
       }))
     }
-    if (e.agentId === undefined) await Promise.all([refreshSession($), refreshGit($), refreshCtx($)])
+    if (e.agentId === undefined) await Promise.all([refreshSession($), refreshGit($)])
     return next(e)
   })
 
@@ -208,8 +144,6 @@ export const register: Register = on => {
     if (e.props.hasSurvey) return next(e)
     const l = await read($, line)
     if (l.model === '') return next(e)
-    const c = await read($, ctx)
-    const stack = c === null ? { cells: [], rest: 0 } : segments(c, 10)
 
     const { Box, Text } = $.ui.resolve(e)
     const sep = <Text dimColor> │ </Text>
@@ -266,82 +200,6 @@ export const register: Register = on => {
           <Text color="cyan">${l.usd.toFixed(2)}</Text>
           {e.props.isWorking && <Text color="cyan"> ⋯</Text>}
         </Box>
-        {c !== null && (
-          <Box flexDirection="row">
-            {stack.cells.map(cell => (
-              <Text color={cell.color}>{'█'.repeat(cell.n)}</Text>
-            ))}
-            <Text dimColor>{'░'.repeat(stack.rest)}</Text>
-            {[...c.used].sort(byTokens).map(slice => (
-              <Text color={colorOf(c, slice)} wrap="truncate">
-                {'  '}
-                {SHORT[slice.name] ?? slice.name.toLowerCase()} {fmtTokens(slice.tokens)}
-              </Text>
-            ))}
-            <Text dimColor wrap="truncate">
-              {'  '}/ctx
-            </Text>
-          </Box>
-        )}
-      </Box>
-    )
-  })
-
-  on('command.run', { command: 'ctx' }, async $ => {
-    await refreshCtx($)
-    await $.ui.open({ id: PANE, title: 'Context' })
-    return { text: 'Context breakdown opened.' }
-  })
-
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
-    const c = await read($, ctx)
-    if (c === null) return <Text dimColor>No context reading yet.</Text>
-
-    const used = c.used.reduce((n, slice) => n + slice.tokens, 0)
-    const pct = (n: number) => `${Math.round((n / c.max) * 100)}%`.padStart(4)
-    const row = (name: string, tokens: number, color?: string) => (
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text color={color} wrap="truncate-middle">
-          {name}
-        </Text>
-        <Text dimColor={color === undefined}>
-          {' '}
-          {fmtTokens(tokens).padStart(5)} {pct(tokens)}
-        </Text>
-      </Box>
-    )
-    const section = (title: string, slices: Slice[]) =>
-      slices.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold>{title}</Text>
-          {slices.map(slice => row(`  ${slice.name}`, slice.tokens))}
-        </Box>
-      )
-    const stack = segments(c, 40)
-
-    return (
-      <Box flexDirection="column">
-        <Text bold>
-          {fmtTokens(used)} / {fmtTokens(c.max)} ({pct(used).trim()})
-        </Text>
-        <Box flexDirection="row">
-          {stack.cells.map(cell => (
-            <Text color={cell.color}>{'█'.repeat(cell.n)}</Text>
-          ))}
-          <Text dimColor>{'░'.repeat(stack.rest)}</Text>
-        </Box>
-        <Box flexDirection="column" marginTop={1}>
-          {c.used.map(slice => row(`■ ${slice.name}`, slice.tokens, colorOf(c, slice)))}
-          {row('□ Free space', c.free)}
-          {c.buffer > 0 && row('□ Autocompact buffer', c.buffer)}
-          {c.deferred > 0 && <Text dimColor>  + {fmtTokens(c.deferred)} of tools loaded on demand (outside the window)</Text>}
-        </Box>
-        {section('CLAUDE.md & memory files', c.memory)}
-        {section('MCP servers', c.mcp)}
-        {section('Plugins (skill listings)', c.plugins)}
-        {section('Skills by source', c.skills)}
-        {section('Agents by source', c.agents)}
       </Box>
     )
   })
