@@ -9,6 +9,8 @@ find . -type f | sed 's#^\./##' | while read -r rel; do
   src="$DOTFILES/home/$rel"
   dst="$HOME/$rel"
   if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+    rm "$dst"
+  elif [ -f "$dst" ] && [ ! -L "$dst" ] && cmp -s "$src" "$dst"; then
     continue
   fi
   mkdir -p "$(dirname "$dst")"
@@ -17,8 +19,8 @@ find . -type f | sed 's#^\./##' | while read -r rel; do
     mv "$dst" "$BACKUP/$rel"
     echo "backed up $dst"
   fi
-  ln -s "$src" "$dst"
-  echo "linked $dst"
+  cp "$src" "$dst"
+  echo "copied $dst"
 done
 
 settings="$HOME/.claude/settings.json"
