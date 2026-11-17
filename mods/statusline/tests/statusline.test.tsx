@@ -3,14 +3,11 @@ import { expect, test } from 'claude-code/testing'
 
 import { bar, fmtSpan, fmtTokens, level } from '../hooks/register'
 
-const BAND = {
-  hasSurvey: false,
+const HINT = {
+  isDraft: false,
   isWorking: false,
-  maxRows: 10,
-  bodyColumns: 120,
-  scroll: { bodyRows: 10, offset: 0 },
-  view: {},
-} as unknown as RenderPropsOf['AbovePrompt']
+  hint: '? for shortcuts',
+} as unknown as RenderPropsOf['PromptHint']
 
 test('formatters', async () => {
   expect(fmtTokens(950)).toBe('950')
@@ -51,11 +48,11 @@ const TURN = {
   usage: { model: 'm', input_tokens: 12000, cache_creation_input_tokens: 345, cache_read_input_tokens: 0, output_tokens: 2100 },
 } as never
 
-test('band draws the figures on terminal and desktop', async ($, on) => {
+test('hint line draws the figures on terminal and desktop', async ($, on) => {
   stub(on as never)
   await $.turn.complete(TURN)
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'statusline', surface, component: 'AbovePrompt', props: BAND })
+    const ui = await $.ui.mount({ plugin: 'statusline', surface, component: 'PromptHint', props: HINT })
     expect(await ui.find({ type: 'Text', text: /Opus 5\.5/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '~/dev/dotfiles' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /⎇ main ●/ })).toBeDefined()
@@ -73,7 +70,7 @@ test('edits count added and removed lines', async ($, on) => {
   on('tool.call', { tool: 'Edit' }, async () => ({ result: {}, text: 'ok', isError: false }) as never)
   await $.turn.complete(TURN)
   await $.tool.call({ tool: 'Edit', file_path: '/x', old_string: 'a\nb', new_string: 'a\nb\nc' } as never)
-  const ui = await $.ui.mount({ plugin: 'statusline', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+  const ui = await $.ui.mount({ plugin: 'statusline', surface: 'terminal', component: 'PromptHint', props: HINT })
   expect(await ui.find({ type: 'Text', text: '+3' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '−2' })).toBeDefined()
 })

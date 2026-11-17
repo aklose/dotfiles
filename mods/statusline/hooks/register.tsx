@@ -140,11 +140,11 @@ export const register: Register = on => {
     return ran
   })
 
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const l = await read($, line)
     if (l.model === '') return next(e)
 
+    const hint = await next(e)
     const { Box, Text } = $.ui.resolve(e)
     const sep = <Text dimColor> │ </Text>
     const ctxLabel =
@@ -152,6 +152,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column">
+        {hint}
         <Box flexDirection="row" justifyContent="space-between">
           <Box flexDirection="row">
             <Text color="cyan" bold>
