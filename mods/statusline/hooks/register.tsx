@@ -8,6 +8,11 @@ const EMPTY: Line = {
   dir: '',
   branch: null,
   isDirty: false,
+  ahead: null,
+  behind: null,
+  stashes: 0,
+  worktree: null,
+  agents: [],
   ctxPercent: null,
   ctxTokens: null,
   window: 200000,
@@ -53,13 +58,49 @@ export const bar = (pct: number | null, width = 10) => {
   return '▰'.repeat(filled) + '▱'.repeat(width - filled)
 }
 
+const WINDOWS: Record<string, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 86400_000 }
+
+export const etaToFull = (pct: number, resetsAt: string | undefined, kind: string, now: number) => {
+  const span = WINDOWS[kind]
+  if (span === undefined || resetsAt === undefined || pct < 10 || pct >= 100) return null
+  const reset = Date.parse(resetsAt)
+  const elapsed = now - (reset - span)
+  if (elapsed < 10 * 60000) return null
+  const eta = (elapsed * (100 - pct)) / pct
+  return eta < reset - now ? eta : null
+}
+
+export const shortModel = (id: string) => /(fable|opus|sonnet|haiku)/i.exec(id)?.[1]?.toLowerCase() ?? id
+
+const ACTIVE = new Set(['pending', 'running', 'waiting'])
+
+const refreshAgents = async ($: EngineInterface) => {
+  const agents = (await $.agent.list()).filter(a => ACTIVE.has(a.status)).map(a => shortModel(a.model ?? '?'))
+  const prev = (await read($, line)).agents
+  if (agents.join() !== prev.join()) await set($, { agents })
+}
+
 const refreshGit = async ($: EngineInterface) => {
   const cwd = await $.session.cwd()
   const git = (...args: string[]) => $.process.run(['git', '--no-optional-locks', '-C', cwd, ...args], { timeoutMs: 2000 })
   const head = await git('branch', '--show-current')
-  if (head.exitCode !== 0) return set($, { branch: null, isDirty: false })
-  const status = await git('status', '--porcelain')
-  await set($, { branch: head.stdout.trim() || 'detached', isDirty: status.stdout.trim() !== '' })
+  if (head.exitCode !== 0) return set($, { branch: null, isDirty: false, ahead: null, behind: null, stashes: 0, worktree: null })
+  const [status, counts, stash, dirs] = await Promise.all([
+    git('status', '--porcelain'),
+    git('rev-list', '--left-right', '--count', 'HEAD...@{u}'),
+    git('stash', 'list'),
+    git('rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'),
+  ])
+  const [ahead, behind] = counts.exitCode === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : []
+  const [top, gitDir, commonDir] = dirs.stdout.trim().split('\n')
+  await set($, {
+    branch: head.stdout.trim() || 'detached',
+    isDirty: status.stdout.trim() !== '',
+    ahead: ahead ?? null,
+    behind: behind ?? null,
+    stashes: countLines(stash.stdout.trim()),
+    worktree: dirs.exitCode === 0 && gitDir !== commonDir ? (top?.split('/').pop() ?? null) : null,
+  })
 }
 
 const refreshSession = async ($: EngineInterface) => {
@@ -85,9 +126,17 @@ const refreshSession = async ($: EngineInterface) => {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await Promise.all([refreshSession($), refreshGit($)])
+    await update($, line, l => ({ ...EMPTY, ...l }))
+    await Promise.all([refreshSession($), refreshGit($), refreshAgents($)])
     $.clock.every(30_000, async () => set($, { now: await $.clock.now() }))
+    $.clock.every(5_000, () => refreshAgents($))
     return next(e)
+  })
+
+  on('agent.spawn', async ($, e, next) => {
+    const ran = await next(e)
+    await refreshAgents($)
+    return ran
   })
 
   on('session.measure', async ($, e, next) => {
@@ -110,6 +159,7 @@ export const register: Register = on => {
         tokOut: l.tokOut + u.output_tokens,
       }))
     }
+    await refreshAgents($)
     if (e.agentId === undefined) await Promise.all([refreshSession($), refreshGit($)])
     return next(e)
   })
@@ -162,10 +212,18 @@ export const register: Register = on => {
             <Text color="blueBright" wrap="truncate-start">
               {l.dir}
             </Text>
+            {l.worktree !== null && <Text color="green"> 🌳 {l.worktree}</Text>}
             {l.branch !== null && (
               <Text color="yellow">
                 {'  '}⎇ {l.branch}
                 {l.isDirty ? ' ●' : ''}
+              </Text>
+            )}
+            {(l.ahead ?? 0) + (l.behind ?? 0) + l.stashes > 0 && (
+              <Text color="yellow" dimColor>
+                {l.ahead ? ` ↑${l.ahead}` : ''}
+                {l.behind ? ` ↓${l.behind}` : ''}
+                {l.stashes ? ` ≡${l.stashes}` : ''}
               </Text>
             )}
           </Box>
@@ -186,19 +244,31 @@ export const register: Register = on => {
             {bar(l.ctxPercent)} {l.ctxPercent ?? '--'}%
           </Text>
           <Text dimColor> {ctxLabel}</Text>
-          {l.limits.map(lim => (
-            <Box flexDirection="row">
-              {sep}
-              <Text color={level(lim.percent)}>
-                {LIMIT_LABELS[lim.kind] ?? lim.kind} {lim.percent}%
-              </Text>
-              {lim.resetsAt !== undefined && (
-                <Text dimColor> ↻{fmtSpan(Date.parse(lim.resetsAt) - l.now)}</Text>
-              )}
-            </Box>
-          ))}
+          {l.limits.map(lim => {
+            const eta = etaToFull(lim.percent, lim.resetsAt, lim.kind, l.now)
+            return (
+              <Box flexDirection="row">
+                {sep}
+                <Text color={level(lim.percent)}>
+                  {LIMIT_LABELS[lim.kind] ?? lim.kind} {lim.percent}%
+                </Text>
+                {lim.resetsAt !== undefined && (
+                  <Text dimColor> ↻{fmtSpan(Date.parse(lim.resetsAt) - l.now)}</Text>
+                )}
+                {eta !== null && <Text color="red"> ⚠ ~{fmtSpan(eta)}</Text>}
+              </Box>
+            )
+          })}
           {sep}
           <Text color="cyan">${l.usd.toFixed(2)}</Text>
+          {l.agents.length > 0 && (
+            <Box flexDirection="row">
+              {sep}
+              <Text color="magenta">
+                🤖 {l.agents.length} · {l.agents.join(' ')}
+              </Text>
+            </Box>
+          )}
           {e.props.isWorking && <Text color="cyan"> ⋯</Text>}
         </Box>
       </Box>

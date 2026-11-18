@@ -5,6 +5,11 @@ export type Line = {
   dir: string
   branch: string | null
   isDirty: boolean
+  ahead: number | null
+  behind: number | null
+  stashes: number
+  worktree: string | null
+  agents: string[]
   ctxPercent: number | null
   ctxTokens: number | null
   window: number

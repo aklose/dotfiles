@@ -1,7 +1,7 @@
 import type { RenderPropsOf } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
-import { bar, fmtSpan, fmtTokens, level } from '../hooks/register'
+import { bar, etaToFull, fmtSpan, fmtTokens, level, shortModel } from '../hooks/register'
 
 const HINT = {
   isDraft: false,
@@ -18,6 +18,18 @@ test('formatters', async () => {
   expect(bar(42)).toBe('▰▰▰▰▱▱▱▱▱▱')
   expect(bar(null)).toBe('▱▱▱▱▱▱▱▱▱▱')
   expect(level(85)).toBe('red')
+  expect(shortModel('claude-haiku-5-5')).toBe('haiku')
+  expect(shortModel('custom')).toBe('custom')
+})
+
+test('limit projection warns only before reset', async () => {
+  const H = 3600_000
+  const reset = new Date(4 * H).toISOString()
+  expect(etaToFull(75, reset, 'five_hour', 2 * H)).toBe(H)
+  expect(etaToFull(60, reset, 'five_hour', 2 * H)).toBe(null)
+  expect(etaToFull(20, reset, 'five_hour', 2 * H)).toBe(null)
+  expect(etaToFull(60, reset, 'spend_limit', 2 * H)).toBe(null)
+  expect(etaToFull(5, reset, 'five_hour', 2 * H)).toBe(null)
 })
 
 const stub = (on: any) => {
@@ -33,8 +45,24 @@ const stub = (on: any) => {
       cost: { usd: 1.234 },
     },
   }))
-  on('process.run', async (_$: unknown, e: { argv: string[] }) => ({
-    value: { exitCode: 0, stdout: e.argv.includes('branch') ? 'main\n' : ' M x\n', stderr: '' },
+  on('process.run', async (_$: unknown, e: { argv: string[] }) => {
+    const out = e.argv.includes('branch')
+      ? 'main\n'
+      : e.argv.includes('rev-list')
+        ? '2\t1\n'
+        : e.argv.includes('stash')
+          ? 'stash@{0}: wip\n'
+          : e.argv.includes('rev-parse')
+            ? '/r/wt-feature\n/r/main/.git/worktrees/wt-feature\n/r/main/.git\n'
+            : ' M x\n'
+    return { value: { exitCode: 0, stdout: out, stderr: '' } }
+  })
+  on('agent.list', async () => ({
+    value: [
+      { status: 'running', model: 'claude-haiku-5-5' },
+      { status: 'completed', model: 'claude-opus-5-5' },
+      { status: 'running', model: 'claude-sonnet-5-5' },
+    ],
   }))
   on('turn.complete', async () => ({ text: '' }))
 }
@@ -61,6 +89,9 @@ test('hint line draws the figures on terminal and desktop', async ($, on) => {
     expect(await ui.find({ type: 'Text', text: /\$1\.23/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /↑12k ↓2k/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /⏱ 12m/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /🌳 wt-feature/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /↑2 ↓1 ≡1/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /🤖 2 · haiku sonnet/ })).toBeDefined()
     await ui.unmount()
   }
 })
