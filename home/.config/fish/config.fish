@@ -10,5 +10,5 @@ set -gx VISUAL "zed --wait"
 if status is-interactive
     starship init fish | source
 
-    neofetch
+    fastfetch
 end
